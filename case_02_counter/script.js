@@ -9,11 +9,18 @@
         if (!Number.isInteger(value)) {
             throw new TypeError("Значение счетчика должно быть целым числом.");
         }
+
         const clampedValue = Math.min(MAX_VALUE, Math.max(MIN_VALUE, value));
         let resultClass = "result--zero";
-        if (clampedValue > 0) resultClass = "result--positive";
-        else if (clampedValue < 0) resultClass = "result--negative";
+
+        if (clampedValue > 0) {
+            resultClass = "result--positive";
+        } else if (clampedValue < 0) {
+            resultClass = "result--negative";
+        }
+
         const isLimit = clampedValue === MIN_VALUE || clampedValue === MAX_VALUE;
+
         return {
             value: clampedValue,
             resultClass,
@@ -34,6 +41,7 @@
         const plusButton = document.getElementById("plus-button");
         const minusButton = document.getElementById("minus-button");
         const message = document.getElementById("limit-message");
+
         result.textContent = String(state.value);
         result.className = `result ${state.resultClass}`;
         plusButton.disabled = state.plusDisabled;
@@ -41,9 +49,21 @@
         message.textContent = state.message;
     }
 
-    if (typeof document === "undefined") return;
+    if (typeof module !== "undefined" && module.exports) {
+        module.exports = { MIN_VALUE, MAX_VALUE, getCounterState };
+    }
 
-    document.getElementById("plus-button").addEventListener("click", () => changeValue(1));
-    document.getElementById("minus-button").addEventListener("click", () => changeValue(-1));
+    if (typeof document === "undefined") {
+        return;
+    }
+
+    document.getElementById("plus-button").addEventListener("click", function () {
+        changeValue(1);
+    });
+
+    document.getElementById("minus-button").addEventListener("click", function () {
+        changeValue(-1);
+    });
+
     render();
 }());
