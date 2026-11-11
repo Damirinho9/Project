@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Интерактивный счетчик</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <main class="counter-card" aria-labelledby="counter-title">
+        <h1 id="counter-title">Счетчик</h1>
+        <div id="result" class="result result--zero" aria-live="polite">0</div>
+        <div class="controls" aria-label="Управление счетчиком">
+            <button id="minus-button" type="button">-</button>
+            <button id="plus-button" type="button">+</button>
+        </div>
+        <p id="limit-message" class="limit-message" aria-live="polite"></p>
+    </main>
+    <script src="script.js"></script>
+</body>
+</html>
