@@ -1,28 +1,39 @@
-# Кейс №3. Веб-приложение приветствия на Django
+# Кейс 3. Django-приложение
 
-Приложение принимает имя пользователя, сохраняет его в локальной базе SQLite и выводит персонализированное приветствие.
+Главная страница содержит форму имени. После отправки имя сохраняется в SQLite и выводится персональное приветствие.
 
-## Возможности
+В проекте используются:
 
-- форма ввода имени и кнопка `Submit`;
 - модель `Visitor` с полем `name`;
-- сохранение имени в SQLite;
-- персональное приветствие;
-- проверка пустого имени и строки из пробелов;
-- стандартная CSRF-защита Django;
-- CSS-оформление;
-- автоматические тесты.
+- `ModelForm`;
+- сохранение через Django ORM;
+- проверка пустого имени;
+- `{% csrf_token %}`;
+- HTML-шаблон и CSS.
 
-## Запуск
+## Установка и запуск
+
+Из корня репозитория:
 
 ```bash
-python -m pip install -r ../requirements.txt
+python -m venv .venv
+python -m pip install -r requirements.txt
+```
+
+Затем:
+
+```bash
+cd case_03_django
 python manage.py migrate
 python manage.py runserver
 ```
 
+Адрес: `http://127.0.0.1:8000/`
+
 ## Тесты
 
 ```bash
-python manage.py test
+python manage.py check
+python manage.py makemigrations --check --dry-run
+python manage.py test -v 2
 ```
