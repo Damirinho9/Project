@@ -1,0 +1,174 @@
+name: mailru-download-and-audit-v3
+on: push
+
+jobs:
+  download:
+    if: contains(github.event.head_commit.message, '[mailru-audit-v3]')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install browser and Excel parser
+        run: |
+          python -m pip install --quiet playwright openpyxl
+          python -m playwright install --with-deps chromium
+      - name: Download public folder
+        shell: bash
+        run: |
+          cat > /tmp/download_mailru.py <<'PY'
+          import asyncio, pathlib, re
+          from playwright.async_api import async_playwright
+
+          URL = "https://cloud.mail.ru/public/H9cv/5nRmemDQ1"
+          OUT = pathlib.Path("source")
+          OUT.mkdir(exist_ok=True)
+
+          async def main():
+              async with async_playwright() as p:
+                  browser = await p.chromium.launch(headless=True, accept_downloads=True)
+                  page = await browser.new_page()
+                  await page.goto(URL, wait_until="domcontentloaded", timeout=120000)
+                  await page.wait_for_timeout(5000)
+
+                  for label in ["Accept all", "Принять все"]:
+                      try:
+                          b = page.get_by_text(label, exact=True)
+                          if await b.count():
+                              await b.first.click(timeout=3000)
+                              await page.wait_for_timeout(1000)
+                              break
+                      except Exception:
+                          pass
+
+                  candidates = [
+                      page.get_by_text(re.compile(r"^Скачать\s+\d")),
+                      page.get_by_role("button", name=re.compile(r"Скачать")),
+                      page.get_by_text("Скачать", exact=True),
+                  ]
+                  clicked = False
+                  last_err = None
+                  for loc in candidates:
+                      try:
+                          if await loc.count():
+                              async with page.expect_download(timeout=120000) as di:
+                                  await loc.first.click(timeout=10000)
+                              dl = await di.value
+                              path = OUT / (dl.suggested_filename or "mailru-folder-download")
+                              await dl.save_as(path)
+                              print("DOWNLOADED", path, path.stat().st_size)
+                              clicked = True
+                              break
+                      except Exception as e:
+                          last_err = repr(e)
+                  if not clicked:
+                      raise RuntimeError(f"download button failed: {last_err}")
+                  await browser.close()
+
+          asyncio.run(main())
+          PY
+          python /tmp/download_mailru.py
+          find source -maxdepth 2 -type f -printf '%p %s bytes\n'
+
+      - name: Unpack and audit XLSX files
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, pathlib, zipfile, re, shutil, hashlib, statistics
+          from openpyxl import load_workbook
+
+          src = pathlib.Path("source")
+          raw_files = list(src.iterdir())
+          if len(raw_files) != 1:
+              raise SystemExit(f"expected one downloaded archive, got {raw_files}")
+          archive = raw_files[0]
+
+          unpack = pathlib.Path("unpacked")
+          unpack.mkdir(exist_ok=True)
+
+          if zipfile.is_zipfile(archive):
+              with zipfile.ZipFile(archive) as z:
+                  z.extractall(unpack)
+          elif archive.suffix.lower() == ".xlsx":
+              shutil.copy2(archive, unpack / archive.name)
+          else:
+              raise SystemExit(f"unknown downloaded type: {archive.name}")
+
+          rows = []
+          for p in sorted(unpack.rglob("*")):
+              if not p.is_file():
+                  continue
+              rec = {
+                  "name": p.name,
+                  "path": str(p),
+                  "size": p.stat().st_size,
+                  "sha256": hashlib.sha256(p.read_bytes()).hexdigest(),
+                  "is_numbered_free": bool(re.fullmatch(r"demo_data_set_\d{2}\.xlsx", p.name, re.I)),
+              }
+              if p.suffix.lower() == ".xlsx":
+                  try:
+                      wb = load_workbook(p, read_only=False, data_only=False)
+                      rec["valid_xlsx"] = True
+                      rec["sheets"] = wb.sheetnames
+                      rec["sheet_stats"] = []
+                      for ws in wb.worksheets:
+                          max_r, max_c = ws.max_row, ws.max_column
+                          nonempty = 0
+                          sample = []
+                          for row in ws.iter_rows():
+                              vals = [c.value for c in row]
+                              nonempty += sum(v is not None for v in vals)
+                              if len(sample) < 8 and any(v is not None for v in vals):
+                                  sample.append(vals[:12])
+                          rec["sheet_stats"].append({
+                              "title": ws.title,
+                              "max_row": max_r,
+                              "max_column": max_c,
+                              "nonempty_cells": nonempty,
+                              "sample": sample,
+                          })
+                      wb.close()
+                  except Exception as e:
+                      rec["valid_xlsx"] = False
+                      rec["error"] = repr(e)
+              rows.append(rec)
+
+          free = [r for r in rows if r.get("is_numbered_free") and r.get("valid_xlsx")]
+          # Prefer a valid file near the lower quartile by size, while avoiding the absolute smallest outlier.
+          chosen = None
+          if free:
+              sizes = sorted(r["size"] for r in free)
+              target = sizes[max(0, len(sizes)//4)]
+              chosen = min(free, key=lambda r: (abs(r["size"]-target), r["name"]))
+
+          report = {
+              "downloaded_archive": archive.name,
+              "archive_size": archive.stat().st_size,
+              "file_count": len(rows),
+              "free_numbered_count": len(free),
+              "chosen": chosen,
+              "files": rows,
+          }
+          pathlib.Path("audit.json").write_text(json.dumps(report, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+
+          with open("audit.tsv","w",encoding="utf-8") as f:
+              f.write("name\tsize\tvalid_xlsx\tfree\tsheets\trows_cols\tsha256\n")
+              for r in rows:
+                  dims = ";".join(f'{s["title"]}:{s["max_row"]}x{s["max_column"]}' for s in r.get("sheet_stats",[]))
+                  f.write(f'{r["name"]}\t{r["size"]}\t{r.get("valid_xlsx")}\t{r.get("is_numbered_free")}\t{"|".join(r.get("sheets",[]))}\t{dims}\t{r["sha256"]}\n')
+
+          print("TOTAL", len(rows), "FREE", len(free))
+          print("CHOSEN", chosen["name"] if chosen else None)
+          if chosen:
+              print("CHOSEN_SIZE", chosen["size"])
+              print("CHOSEN_SHA256", chosen["sha256"])
+              print("CHOSEN_SHEETS", chosen["sheets"])
+              print("CHOSEN_STATS", chosen["sheet_stats"])
+          PY
+      - name: Upload full source and audit
+        uses: actions/upload-artifact@v4
+        with:
+          name: mailru-7342510-source-and-audit
+          path: |
+            source/
+            unpacked/
+            audit.json
+            audit.tsv
+          retention-days: 3
