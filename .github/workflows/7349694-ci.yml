@@ -41,21 +41,27 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Prepare writable directories
+        run: mkdir -p qa/screenshots qa/playwright-results storage/logs storage/framework/cache/data storage/framework/sessions storage/framework/views bootstrap/cache
+
       - name: Install Composer dependencies
+        id: composer
         run: composer install --no-interaction --prefer-dist --no-progress
 
       - name: Prepare Laravel environment
+        id: bootstrap
         run: |
           cp .env.example .env
           php artisan key:generate
-          mkdir -p qa/screenshots qa/playwright-results storage/logs storage/framework/cache/data storage/framework/sessions storage/framework/views bootstrap/cache
 
       - name: Record MySQL version
+        id: mysql
         env:
           MYSQL_PWD: root
-        run: mysql -h127.0.0.1 -uroot -N -e "SELECT VERSION();" > qa/mysql-version.txt
+        run: mysql -h127.0.0.1 -uroot -N -e "SELECT VERSION();" | tee qa/mysql-version.txt
 
       - name: Migrate and seed MySQL
+        id: migrate
         env:
           DB_CONNECTION: mysql
           DB_HOST: 127.0.0.1
@@ -66,6 +72,7 @@ jobs:
         run: php artisan migrate:fresh --seed --force 2>&1 | tee qa/migrations.txt
 
       - name: Verify seed data
+        id: seed
         env:
           DB_CONNECTION: mysql
           DB_HOST: 127.0.0.1
@@ -79,6 +86,7 @@ jobs:
           grep -q 'categories=8' qa/seed-check.txt
 
       - name: Record routes
+        id: routes
         env:
           DB_CONNECTION: mysql
           DB_HOST: 127.0.0.1
@@ -89,6 +97,7 @@ jobs:
         run: php artisan route:list 2>&1 | tee qa/artisan-route-list.txt
 
       - name: Run PHP feature tests on MySQL
+        id: tests
         env:
           DB_CONNECTION: mysql
           DB_HOST: 127.0.0.1
@@ -99,6 +108,7 @@ jobs:
         run: php artisan test 2>&1 | tee qa/artisan-test.txt
 
       - name: Recreate seeded DB for browser tests
+        id: reseed
         env:
           DB_CONNECTION: mysql
           DB_HOST: 127.0.0.1
@@ -109,14 +119,17 @@ jobs:
         run: php artisan migrate:fresh --seed --force
 
       - name: Run static frontend check
+        id: static
         run: npm run test:frontend 2>&1 | tee qa/frontend-check.txt
 
       - name: Install Playwright
+        id: playwright_install
         run: |
           npm install --no-audit --no-fund
           npx playwright install --with-deps chromium
 
       - name: Start Laravel server
+        id: server
         env:
           APP_ENV: testing
           APP_URL: http://127.0.0.1:8000
@@ -139,30 +152,47 @@ jobs:
           exit 1
 
       - name: HTTP smoke test
+        id: smoke
         run: |
           curl -fSs -D qa/http-headers.txt http://127.0.0.1:8000/ -o qa/home.html
           grep -q 'Нарушениям.Нет' qa/home.html
           echo 'HTTP smoke test PASS' | tee qa/http-smoke.txt
 
       - name: Playwright browser workflow
+        id: browser
         env:
           APP_URL: http://127.0.0.1:8000
         run: npm run test:browser 2>&1 | tee qa/playwright.txt
 
       - name: Build validation summary
         if: always()
+        env:
+          COMPOSER_RESULT: ${{ steps.composer.outcome }}
+          BOOTSTRAP_RESULT: ${{ steps.bootstrap.outcome }}
+          MYSQL_RESULT: ${{ steps.mysql.outcome }}
+          MIGRATE_RESULT: ${{ steps.migrate.outcome }}
+          SEED_RESULT: ${{ steps.seed.outcome }}
+          ROUTES_RESULT: ${{ steps.routes.outcome }}
+          TESTS_RESULT: ${{ steps.tests.outcome }}
+          STATIC_RESULT: ${{ steps.static.outcome }}
+          SERVER_RESULT: ${{ steps.server.outcome }}
+          SMOKE_RESULT: ${{ steps.smoke.outcome }}
+          BROWSER_RESULT: ${{ steps.browser.outcome }}
         run: |
+          mkdir -p qa
+          status() { [ "$1" = "success" ] && echo PASS || echo "${1:-NOT_RUN}"; }
           {
-            echo "Composer install ............ PASS"
-            echo "Laravel bootstrap ........... PASS"
-            echo "MySQL 8 connection .......... PASS"
-            echo "migrate:fresh --seed ........ $([ -s qa/migrations.txt ] && echo PASS || echo CHECK)"
-            echo "Admin seeder ................ $([ -s qa/seed-check.txt ] && grep -q 'admin=yes' qa/seed-check.txt && echo PASS || echo CHECK)"
-            echo "8 categories ................ $([ -s qa/seed-check.txt ] && grep -q 'categories=8' qa/seed-check.txt && echo PASS || echo CHECK)"
-            echo "route:list .................. $([ -s qa/artisan-route-list.txt ] && echo PASS || echo CHECK)"
-            echo "Feature tests ............... $([ -s qa/artisan-test.txt ] && echo EXECUTED || echo CHECK)"
-            echo "HTTP smoke tests ............ $([ -s qa/http-smoke.txt ] && echo PASS || echo CHECK)"
-            echo "Playwright scenarios ........ $([ -s qa/playwright.txt ] && echo EXECUTED || echo CHECK)"
+            echo "Composer install ............ $(status "$COMPOSER_RESULT")"
+            echo "Laravel bootstrap ........... $(status "$BOOTSTRAP_RESULT")"
+            echo "MySQL 8 connection .......... $(status "$MYSQL_RESULT")"
+            echo "migrate:fresh --seed ........ $(status "$MIGRATE_RESULT")"
+            echo "Admin seeder + 8 categories . $(status "$SEED_RESULT")"
+            echo "route:list .................. $(status "$ROUTES_RESULT")"
+            echo "Feature tests ............... $(status "$TESTS_RESULT")"
+            echo "Frontend static QA .......... $(status "$STATIC_RESULT")"
+            echo "Laravel HTTP server ......... $(status "$SERVER_RESULT")"
+            echo "HTTP smoke tests ............ $(status "$SMOKE_RESULT")"
+            echo "Playwright scenarios ........ $(status "$BROWSER_RESULT")"
           } > qa/FINAL_CI_VALIDATION.txt
           cat qa/FINAL_CI_VALIDATION.txt
 
