@@ -1,0 +1,20 @@
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Foundation\Auth\User as Authenticatable;
+use Illuminate\Notifications\Notifiable;
+
+class User extends Authenticatable
+{
+    use Notifiable;
+
+    // Mass assignment ограничен только полями, которые допустимо заполнять из приложения.
+    protected $fillable = ['login', 'password', 'fio', 'phone', 'email', 'role'];
+    protected $hidden = ['password', 'remember_token'];
+    protected function casts(): array { return ['password' => 'hashed']; }
+
+    public function reports(): HasMany { return $this->hasMany(Report::class); }
+    public function isAdmin(): bool { return $this->role === 'admin'; }
+}

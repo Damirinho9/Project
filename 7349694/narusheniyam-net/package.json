@@ -1,0 +1,10 @@
+{
+  "private": true,
+  "scripts": {
+    "test:frontend": "node tests/frontend-check.mjs",
+    "test:browser": "playwright test tests/Browser/exam.spec.js --reporter=line"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0"
+  }
+}
