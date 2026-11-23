@@ -94,6 +94,7 @@ test('complete exam workflow and responsive QA', async ({ browser }) => {
   await login(desktop, username, 'secret1');
   response = await desktop.goto('/admin');
   expect(response.status()).toBe(403);
+  await desktop.goto('/');
   await logout(desktop);
 
   // Seeded admin credentials work and report is visible.
